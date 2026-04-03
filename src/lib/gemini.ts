@@ -1,16 +1,34 @@
 import { GoogleGenAI, Type } from "@google/genai";
+import Anthropic from "@anthropic-ai/sdk";
 
 let aiInstance: GoogleGenAI | null = null;
+let anthropicInstance: Anthropic | null = null;
 
 function getAI() {
   if (!aiInstance) {
     const apiKey = process.env.GEMINI_API_KEY;
     if (!apiKey) {
-      throw new Error("GEMINI_API_KEY is not defined. Please set it in your environment variables.");
+      console.warn("GEMINI_API_KEY is not defined.");
+      return null;
     }
     aiInstance = new GoogleGenAI({ apiKey });
   }
   return aiInstance;
+}
+
+function getAnthropic() {
+  if (!anthropicInstance) {
+    const apiKey = process.env.ANTHROPIC_API_KEY;
+    if (!apiKey) {
+      console.warn("ANTHROPIC_API_KEY is not defined.");
+      return null;
+    }
+    anthropicInstance = new Anthropic({ 
+      apiKey,
+      dangerouslyAllowBrowser: true // Required for client-side usage in preview
+    });
+  }
+  return anthropicInstance;
 }
 
 async function retryWithBackoff<T>(fn: () => Promise<T>, maxRetries = 3): Promise<T> {
@@ -20,7 +38,7 @@ async function retryWithBackoff<T>(fn: () => Promise<T>, maxRetries = 3): Promis
       return await fn();
     } catch (error: any) {
       lastError = error;
-      const isRateLimit = error?.message?.includes('429') || error?.status === 'RESOURCE_EXHAUSTED';
+      const isRateLimit = error?.message?.includes('429') || error?.status === 'RESOURCE_EXHAUSTED' || error?.status === 429;
       if (isRateLimit && i < maxRetries - 1) {
         const delay = Math.pow(2, i) * 2000 + Math.random() * 1000;
         console.warn(`Rate limited. Retrying in ${Math.round(delay)}ms... (Attempt ${i + 1}/${maxRetries})`);
@@ -34,16 +52,15 @@ async function retryWithBackoff<T>(fn: () => Promise<T>, maxRetries = 3): Promis
 }
 
 export async function extractTenderData(text: string, feedback?: string) {
-  const ai = getAI();
+  const anthropic = getAnthropic();
+  const gemini = getAI();
+  
   const feedbackSection = feedback ? `
   IMPORTANT: The user has provided the following feedback on the previous extraction. Please adjust your analysis accordingly:
   "${feedback}"
   ` : '';
 
-  return retryWithBackoff(async () => {
-    const response = await ai.models.generateContent({
-      model: "gemini-flash-latest",
-      contents: `You are a data normalization engine for technical specifications extracted from tender documents.
+  const prompt = `You are a data normalization engine for technical specifications extracted from tender documents.
       Your task is to clean, standardize, and structure the extracted data from the provided text.
 
       -----------------------------------
@@ -59,7 +76,7 @@ export async function extractTenderData(text: string, feedback?: string) {
       - Keep RPM, cores, ports clearly
 
       3. PARAMETER STANDARDIZATION:
- map variations to standard names:
+      Map variations to standard names:
       - "Memory", "RAM", "System Memory" → RAM
       - "Processor", "CPU" → CPU
       - "Storage Capacity", "Raw Storage" → Storage
@@ -88,67 +105,118 @@ export async function extractTenderData(text: string, feedback?: string) {
       ${feedbackSection}
 
       Document Text:
-      ${text.substring(0, 30000)}`,
-      config: {
-        responseMimeType: "application/json",
-        responseSchema: {
-          type: Type.OBJECT,
-          properties: {
-            hardware: {
-              type: Type.ARRAY,
-              items: {
-                type: Type.OBJECT,
-                properties: {
-                  parameter: { type: Type.STRING },
-                  value: { type: Type.STRING },
-                  normalized_unit: { type: Type.STRING },
-                  notes: { type: Type.STRING }
-                },
-                required: ["parameter", "value", "normalized_unit", "notes"]
+      ${text.substring(0, 30000)}
+
+      Return the data in the following JSON format:
+      {
+        "hardware": [
+          { "parameter": "string", "value": "string", "normalized_unit": "string", "notes": "string" }
+        ],
+        "software": [
+          { "parameter": "string", "value": "string", "notes": "string" }
+        ]
+      }`;
+
+  // Try Claude first
+  if (anthropic) {
+    try {
+      return await retryWithBackoff(async () => {
+        const msg = await anthropic.messages.create({
+          model: "claude-3-5-sonnet-20240620",
+          max_tokens: 4096,
+          system: "You are a data normalization engine. Always respond with valid JSON only.",
+          messages: [{ role: "user", content: prompt }],
+        });
+
+        const content = msg.content[0];
+        if (content.type === 'text') {
+          const data = JSON.parse(content.text);
+          return flattenData(data);
+        }
+        throw new Error("Unexpected Claude response format");
+      });
+    } catch (error) {
+      console.error("Claude extraction failed, falling back to Gemini:", error);
+    }
+  }
+
+  // Fallback to Gemini
+  if (gemini) {
+    return retryWithBackoff(async () => {
+      const response = await gemini.models.generateContent({
+        model: "gemini-flash-latest",
+        contents: prompt,
+        config: {
+          responseMimeType: "application/json",
+          responseSchema: {
+            type: Type.OBJECT,
+            properties: {
+              hardware: {
+                type: Type.ARRAY,
+                items: {
+                  type: Type.OBJECT,
+                  properties: {
+                    parameter: { type: Type.STRING },
+                    value: { type: Type.STRING },
+                    normalized_unit: { type: Type.STRING },
+                    notes: { type: Type.STRING }
+                  },
+                  required: ["parameter", "value", "normalized_unit", "notes"]
+                }
+              },
+              software: {
+                type: Type.ARRAY,
+                items: {
+                  type: Type.OBJECT,
+                  properties: {
+                    parameter: { type: Type.STRING },
+                    value: { type: Type.STRING },
+                    notes: { type: Type.STRING }
+                  },
+                  required: ["parameter", "value", "notes"]
+                }
               }
             },
-            software: {
-              type: Type.ARRAY,
-              items: {
-                type: Type.OBJECT,
-                properties: {
-                  parameter: { type: Type.STRING },
-                  value: { type: Type.STRING },
-                  notes: { type: Type.STRING }
-                },
-                required: ["parameter", "value", "notes"]
-              }
-            }
-          },
-          required: ["hardware", "software"]
+            required: ["hardware", "software"]
+          }
         }
+      });
+
+      try {
+        const data = JSON.parse(response.text || '{"hardware": [], "software": []}');
+        return flattenData(data);
+      } catch (e) {
+        console.error("Failed to parse Gemini response:", e);
+        return [];
       }
     });
+  }
 
-    try {
-      const data = JSON.parse(response.text || '{"hardware": [], "software": []}');
-      const flattened: any[] = [];
-      data.hardware.forEach((item: any) => {
-        flattened.push({
-          category: 'hardware',
-          parameter: item.parameter,
-          value: item.value,
-          normalized_unit: item.normalized_unit,
-          notes: item.notes
-        });
+  throw new Error("No AI engine available (Gemini or Claude)");
+}
+
+function flattenData(data: any) {
+  const flattened: any[] = [];
+  if (data.hardware) {
+    data.hardware.forEach((item: any) => {
+      flattened.push({
+        category: 'hardware',
+        parameter: item.parameter,
+        value: item.value,
+        normalized_unit: item.normalized_unit,
+        notes: item.notes
       });
-      data.software.forEach((item: any) => {
-        flattened.push({
-          category: 'software',
-          parameter: item.parameter,
-          value: item.value,
-          notes: item.notes
-        });
+    });
+  }
+  if (data.software) {
+    data.software.forEach((item: any) => {
+      flattened.push({
+        category: 'software',
+        parameter: item.parameter,
+        value: item.value,
+        notes: item.notes
       });
-      return flattened;
-    } catch (e) {
-      console.error("Failed to parse Gemini response:", e);
-      return [];
-    }
-  });
+    });
+  }
+  return flattened;
 }
