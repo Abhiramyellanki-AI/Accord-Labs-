@@ -1,0 +1,54 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "User profile information",
+      "type": "object",
+      "properties": {
+        "email": { "type": "string", "format": "email" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["email", "createdAt"]
+    },
+    "Document": {
+      "title": "Document",
+      "description": "Tender document metadata",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "fileName": { "type": "string" },
+        "fileType": { "type": "string", "enum": ["pdf", "xlsx"] },
+        "uploadDate": { "type": "string", "format": "date-time" },
+        "status": { "type": "string", "enum": ["uploaded", "processing", "completed", "error"] }
+      },
+      "required": ["userId", "fileName", "fileType", "uploadDate", "status"]
+    },
+    "ExtractedData": {
+      "title": "ExtractedData",
+      "description": "AI extracted technical specifications",
+      "type": "object",
+      "properties": {
+        "documentId": { "type": "string" },
+        "category": { "type": "string", "enum": ["hardware", "software"] },
+        "parameter": { "type": "string" },
+        "value": { "type": "string" },
+        "confidenceScore": { "type": "number" }
+      },
+      "required": ["documentId", "category", "parameter", "value"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "User",
+      "description": "User profiles"
+    },
+    "/documents/{documentId}": {
+      "schema": "Document",
+      "description": "Uploaded documents"
+    },
+    "/documents/{documentId}/extracted_data/{dataId}": {
+      "schema": "ExtractedData",
+      "description": "Data extracted from a document"
+    }
+  }
+}
