@@ -1,8 +1,20 @@
 import { GoogleGenAI, Type } from "@google/genai";
 
-const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+let aiInstance: GoogleGenAI | null = null;
+
+function getAI() {
+  if (!aiInstance) {
+    const apiKey = process.env.GEMINI_API_KEY;
+    if (!apiKey) {
+      throw new Error("GEMINI_API_KEY is not defined. Please set it in your environment variables.");
+    }
+    aiInstance = new GoogleGenAI({ apiKey });
+  }
+  return aiInstance;
+}
 
 export async function extractTenderData(text: string, feedback?: string) {
+  const ai = getAI();
   const feedbackSection = feedback ? `
   IMPORTANT: The user has provided the following feedback on the previous extraction. Please adjust your analysis accordingly:
   "${feedback}"
