@@ -42,7 +42,7 @@ export async function extractTenderData(text: string, feedback?: string) {
 
   return retryWithBackoff(async () => {
     const response = await ai.models.generateContent({
-      model: "gemini-1.5-flash",
+      model: "gemini-flash-latest",
       contents: `You are a data normalization engine for technical specifications extracted from tender documents.
       Your task is to clean, standardize, and structure the extracted data from the provided text.
 
