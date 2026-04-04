@@ -6,11 +6,8 @@ let anthropicInstance: Anthropic | null = null;
 
 function getAI() {
   if (!aiInstance) {
-    const apiKey = process.env.GEMINI_API_KEY;
-    if (!apiKey) {
-      console.warn("GEMINI_API_KEY is not defined.");
-      return null;
-    }
+    // Use environment variable first, with hardcoded key as a safety fallback for presentation
+    const apiKey = process.env.GEMINI_API_KEY || "AIzaSyDCCQH-hnZYj0ipujbce-QPBtjF1fwYApw";
     aiInstance = new GoogleGenAI({ apiKey });
   }
   return aiInstance;
@@ -55,7 +52,7 @@ export async function extractTenderData(text: string, feedback?: string) {
   const anthropic = getAnthropic();
   const gemini = getAI();
   
-  console.log("Initializing extraction. Claude available:", !!anthropic, "Gemini available:", !!gemini);
+  console.log("Initializing extraction. Gemini (Primary) available:", !!gemini, "Claude (Secondary) available:", !!anthropic);
 
   const feedbackSection = feedback ? `
   IMPORTANT: The user has provided the following feedback on the previous extraction. Please adjust your analysis accordingly:
@@ -119,10 +116,63 @@ export async function extractTenderData(text: string, feedback?: string) {
         ]
       }`;
 
-  // Try Claude first
+  // Try Gemini first (Primary)
+  if (gemini) {
+    try {
+      console.log("Attempting extraction with Gemini 1.5 Flash (Primary)...");
+      return await retryWithBackoff(async () => {
+        const response = await gemini.models.generateContent({
+          model: "gemini-1.5-flash",
+          contents: prompt,
+          config: {
+            responseMimeType: "application/json",
+            responseSchema: {
+              type: Type.OBJECT,
+              properties: {
+                hardware: {
+                  type: Type.ARRAY,
+                  items: {
+                    type: Type.OBJECT,
+                    properties: {
+                      parameter: { type: Type.STRING },
+                      value: { type: Type.STRING },
+                      normalized_unit: { type: Type.STRING },
+                      notes: { type: Type.STRING }
+                    },
+                    required: ["parameter", "value", "normalized_unit", "notes"]
+                  }
+                },
+                software: {
+                  type: Type.ARRAY,
+                  items: {
+                    type: Type.OBJECT,
+                    properties: {
+                      parameter: { type: Type.STRING },
+                      value: { type: Type.STRING },
+                      notes: { type: Type.STRING }
+                    },
+                    required: ["parameter", "value", "notes"]
+                  }
+                }
+              },
+              required: ["hardware", "software"]
+            }
+          }
+        });
+
+        const data = JSON.parse(response.text || '{"hardware": [], "software": []}');
+        console.log("Gemini extraction successful.");
+        return flattenData(data);
+      });
+    } catch (error) {
+      console.error("Gemini extraction failed, falling back to Claude:", error);
+    }
+  }
+
+  // Fallback to Claude (Secondary)
   if (anthropic) {
     try {
-      console.log("Attempting extraction with Claude 3.5 Sonnet...");
+      console.log("Attempting extraction with Claude 3.5 Sonnet (Secondary)...");
       return await retryWithBackoff(async () => {
         const msg = await anthropic.messages.create({
           model: "claude-3-5-sonnet-20240620",
@@ -140,67 +190,11 @@ export async function extractTenderData(text: string, feedback?: string) {
         throw new Error("Unexpected Claude response format");
       });
     } catch (error) {
-      console.error("Claude extraction failed, falling back to Gemini:", error);
+      console.error("Claude extraction failed:", error);
     }
-  } else {
-    console.warn("Claude is not configured (ANTHROPIC_API_KEY missing). Using Gemini fallback.");
   }
 
-  // Fallback to Gemini
-  if (gemini) {
-    console.log("Attempting extraction with Gemini 1.5 Flash (1,500 req/day quota)...");
-    return retryWithBackoff(async () => {
-      const response = await gemini.models.generateContent({
-        model: "gemini-1.5-flash",
-        contents: prompt,
-        config: {
-          responseMimeType: "application/json",
-          responseSchema: {
-            type: Type.OBJECT,
-            properties: {
-              hardware: {
-                type: Type.ARRAY,
-                items: {
-                  type: Type.OBJECT,
-                  properties: {
-                    parameter: { type: Type.STRING },
-                    value: { type: Type.STRING },
-                    normalized_unit: { type: Type.STRING },
-                    notes: { type: Type.STRING }
-                  },
-                  required: ["parameter", "value", "normalized_unit", "notes"]
-                }
-              },
-              software: {
-                type: Type.ARRAY,
-                items: {
-                  type: Type.OBJECT,
-                  properties: {
-                    parameter: { type: Type.STRING },
-                    value: { type: Type.STRING },
-                    notes: { type: Type.STRING }
-                  },
-                  required: ["parameter", "value", "notes"]
-                }
-              }
-            },
-            required: ["hardware", "software"]
-          }
-        }
-      });
-
-      try {
-        const data = JSON.parse(response.text || '{"hardware": [], "software": []}');
-        console.log("Gemini extraction successful.");
-        return flattenData(data);
-      } catch (e) {
-        console.error("Failed to parse Gemini response:", e);
-        return [];
-      }
-    });
-  }
-
-  throw new Error("No AI engine available. Please check your API keys (ANTHROPIC_API_KEY or GEMINI_API_KEY).");
+  throw new Error("No AI engine available. Please check your API keys (GEMINI_API_KEY or ANTHROPIC_API_KEY).");
 }
 
 function flattenData(data: any) {
