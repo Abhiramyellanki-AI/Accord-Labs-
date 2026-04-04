@@ -8,7 +8,6 @@ import {
   addDoc, 
   updateDoc, 
   doc, 
-  getDoc,
   deleteDoc,
   orderBy,
   getDocs,
@@ -39,14 +38,13 @@ import UploadView from './UploadView';
 import ResultsView from './ResultsView';
 import Logo from './Logo';
 import { cn, formatDate } from '../lib/utils';
-import { extractTenderData } from '../lib/llm';
+import { extractTenderData } from '../lib/gemini';
 
 export default function Dashboard({ user }: { user: User }) {
   const [activeTab, setActiveTab] = useState<'dashboard' | 'documents'>('dashboard');
   const [documents, setDocuments] = useState<TenderDocument[]>([]);
   const [selectedDoc, setSelectedDoc] = useState<TenderDocument | null>(null);
   const [loading, setLoading] = useState(true);
-  const [searchTerm, setSearchTerm] = useState('');
 
   useEffect(() => {
     const q = query(
@@ -88,9 +86,8 @@ export default function Dashboard({ user }: { user: User }) {
 
     try {
       // 1. Get the extracted text from the document
-      const docRef = doc(db, 'documents', selectedDoc.id);
-      const docSnap = await getDoc(docRef);
-      const text = docSnap.data()?.extractedText;
+      const docSnap = await getDocs(query(collection(db, 'documents'), where('__name__', '==', selectedDoc.id)));
+      const text = docSnap.docs[0]?.data()?.extractedText;
 
       if (!text) throw new Error("No extracted text found for this document.");
 
@@ -118,10 +115,6 @@ export default function Dashboard({ user }: { user: User }) {
       throw err;
     }
   };
-
-  const filteredDocuments = documents.filter(doc => 
-    doc.fileName.toLowerCase().includes(searchTerm.toLowerCase())
-  );
 
   return (
     <div className="min-h-screen bg-neutral flex font-sans">
@@ -198,8 +191,6 @@ export default function Dashboard({ user }: { user: User }) {
               <input 
                 type="text" 
                 placeholder="Search documents..." 
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
                 className="pl-14 pr-6 py-4 bg-white border border-slate-200 rounded-2xl w-96 focus:outline-none focus:ring-4 ring-primary/5 focus:border-primary transition-all shadow-sm"
               />
             </div>
@@ -252,21 +243,17 @@ export default function Dashboard({ user }: { user: User }) {
                   <div className="flex items-center justify-center py-32">
                     <Loader2 className="w-12 h-12 animate-spin text-slate-300" />
                   </div>
-                ) : filteredDocuments.length === 0 ? (
+                ) : documents.length === 0 ? (
                   <div className="glass-card rounded-5xl p-24 text-center">
                     <div className="w-24 h-24 bg-slate-50 rounded-4xl flex items-center justify-center mx-auto mb-8">
                       <FileText className="w-12 h-12 text-slate-200" />
                     </div>
-                    <h3 className="text-3xl font-bold text-primary mb-4">
-                      {searchTerm ? 'No matches found' : 'No documents analyzed'}
-                    </h3>
-                    <p className="text-xl text-secondary mb-10 max-w-md mx-auto">
-                      {searchTerm ? `No documents match "${searchTerm}"` : 'Upload your first government tender document to start the sovereign analysis pipeline.'}
-                    </p>
+                    <h3 className="text-3xl font-bold text-primary mb-4">No documents analyzed</h3>
+                    <p className="text-xl text-secondary mb-10 max-w-md mx-auto">Upload your first government tender document to start the sovereign analysis pipeline.</p>
                   </div>
                 ) : (
                   <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-8">
-                    {filteredDocuments.slice(0, 3).map((doc) => (
+                    {documents.slice(0, 3).map((doc) => (
                       <motion.div 
                         key={doc.id}
                         layoutId={doc.id}
@@ -319,41 +306,26 @@ export default function Dashboard({ user }: { user: User }) {
                 <div className="flex items-center justify-center py-32">
                   <Loader2 className="w-12 h-12 animate-spin text-slate-300" />
                 </div>
-              ) : filteredDocuments.length === 0 ? (
+              ) : documents.length === 0 ? (
                 <div className="glass-card rounded-5xl p-24 text-center">
                   <div className="w-24 h-24 bg-slate-50 rounded-4xl flex items-center justify-center mx-auto mb-8">
                     <FileText className="w-12 h-12 text-slate-200" />
                   </div>
-                  <h3 className="text-3xl font-bold text-primary mb-4">
-                    {searchTerm ? 'No matches found' : 'No documents found'}
-                  </h3>
-                  <p className="text-xl text-secondary mb-10 max-w-md mx-auto">
-                    {searchTerm ? `No documents match "${searchTerm}"` : "You haven't uploaded any documents yet."}
-                  </p>
-                  {!searchTerm && (
-                    <button onClick={() => setActiveTab('dashboard')} className="btn-primary mx-auto">
-                      <Plus className="w-6 h-6" /> Upload Document
-                    </button>
-                  )}
+                  <h3 className="text-3xl font-bold text-primary mb-4">No documents found</h3>
+                  <p className="text-xl text-secondary mb-10 max-w-md mx-auto">You haven't uploaded any documents yet.</p>
+                  <button onClick={() => setActiveTab('dashboard')} className="btn-primary mx-auto">
+                    <Plus className="w-6 h-6" /> Upload Document
+                  </button>
                 </div>
               ) : (
                 <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-8">
-                  {filteredDocuments.map((doc) => (
+                  {documents.map((doc) => (
                     <motion.div 
                       key={doc.id}
                       layoutId={doc.id}
-                      className="glass-card p-8 rounded-4xl hover:shadow-2xl hover:shadow-slate-200/50 transition-all group cursor-pointer border-transparent hover:border-primary/10 relative"
+                      className="glass-card p-8 rounded-4xl hover:shadow-2xl hover:shadow-slate-200/50 transition-all group cursor-pointer border-transparent hover:border-primary/10"
                       onClick={() => setSelectedDoc(doc)}
                     >
-                      <button 
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          handleDelete(doc.id);
-                        }}
-                        className="absolute top-6 right-6 p-2 text-slate-300 hover:text-tertiary hover:bg-tertiary/5 rounded-xl transition-all opacity-0 group-hover:opacity-100"
-                      >
-                        <Trash2 className="w-5 h-5" />
-                      </button>
                       <div className="flex items-start justify-between mb-8">
                         <div className={cn(
                           "w-16 h-16 rounded-3xl flex items-center justify-center shadow-sm",

@@ -26,7 +26,7 @@ import {
 import { motion, AnimatePresence } from 'motion/react';
 import * as XLSX from 'xlsx';
 import { cn } from '../lib/utils';
-import { extractTenderData } from '../lib/llm';
+import { extractTenderData } from '../lib/gemini';
 
 export default function ResultsView({ document, onReAnalyze }: { document: TenderDocument, onReAnalyze?: (feedback: string) => Promise<void> }) {
   const [data, setData] = useState<ExtractedData[]>([]);
@@ -36,8 +36,6 @@ export default function ResultsView({ document, onReAnalyze }: { document: Tende
   const [reviewStatus, setReviewStatus] = useState<'reviewing' | 'feedback' | 'finalized'>('reviewing');
   const [feedback, setFeedback] = useState('');
   const [isReAnalyzing, setIsReAnalyzing] = useState(false);
-  const [editingId, setEditingId] = useState<string | null>(null);
-  const [editValue, setEditValue] = useState('');
 
   useEffect(() => {
     const q = query(
@@ -96,16 +94,6 @@ export default function ResultsView({ document, onReAnalyze }: { document: Tende
       console.error("Re-analysis failed:", err);
     } finally {
       setIsReAnalyzing(false);
-    }
-  };
-
-  const handleUpdateValue = async (id: string) => {
-    try {
-      const docRef = doc(db, 'documents', document.id, 'extracted_data', id);
-      await updateDoc(docRef, { value: editValue });
-      setEditingId(null);
-    } catch (err) {
-      console.error("Failed to update value:", err);
     }
   };
 
@@ -327,40 +315,7 @@ export default function ResultsView({ document, onReAnalyze }: { document: Tende
                           </div>
                         </td>
                         <td className="px-8 py-6">
-                          {editingId === item.id ? (
-                            <div className="flex items-center gap-2">
-                              <input 
-                                type="text" 
-                                value={editValue}
-                                onChange={(e) => setEditValue(e.target.value)}
-                                className="px-3 py-1 bg-white border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 ring-primary/10"
-                                autoFocus
-                              />
-                              <button 
-                                onClick={() => handleUpdateValue(item.id)}
-                                className="p-1 text-green-600 hover:bg-green-50 rounded-md"
-                              >
-                                <CheckCircle2 className="w-4 h-4" />
-                              </button>
-                              <button 
-                                onClick={() => setEditingId(null)}
-                                className="p-1 text-slate-400 hover:bg-slate-100 rounded-md"
-                              >
-                                <X className="w-4 h-4" />
-                              </button>
-                            </div>
-                          ) : (
-                            <div 
-                              className="flex items-center justify-between group/cell cursor-pointer"
-                              onClick={() => {
-                                setEditingId(item.id);
-                                setEditValue(item.value);
-                              }}
-                            >
-                              <span className="text-secondary font-medium">{item.value}</span>
-                              <Code className="w-3 h-3 text-slate-300 opacity-0 group-hover/cell:opacity-100 transition-opacity" />
-                            </div>
-                          )}
+                          <span className="text-secondary font-medium">{item.value}</span>
                         </td>
                         <td className="px-8 py-6">
                           <span className="text-xs font-bold text-primary bg-slate-100 px-2 py-1 rounded-md">{item.normalized_unit || '-'}</span>
@@ -369,12 +324,7 @@ export default function ResultsView({ document, onReAnalyze }: { document: Tende
                           <span className="text-xs text-secondary italic max-w-[200px] block truncate" title={item.notes}>{item.notes || '-'}</span>
                         </td>
                         <td className="px-8 py-6 text-right">
-                          <span className={cn(
-                            "text-xs font-bold px-2 py-1 rounded-md",
-                            (item.confidenceScore || 0) > 0.9 ? "text-green-600 bg-green-50" : "text-amber-600 bg-amber-50"
-                          )}>
-                            {Math.round((item.confidenceScore || 0) * 100)}%
-                          </span>
+                          <span className="text-xs font-bold text-green-600 bg-green-50 px-2 py-1 rounded-md">98%</span>
                         </td>
                       </tr>
                     );
@@ -432,51 +382,13 @@ export default function ResultsView({ document, onReAnalyze }: { document: Tende
                           </div>
                         </td>
                         <td className="px-8 py-6">
-                          {editingId === item.id ? (
-                            <div className="flex items-center gap-2">
-                              <input 
-                                type="text" 
-                                value={editValue}
-                                onChange={(e) => setEditValue(e.target.value)}
-                                className="px-3 py-1 bg-white border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 ring-primary/10"
-                                autoFocus
-                              />
-                              <button 
-                                onClick={() => handleUpdateValue(item.id)}
-                                className="p-1 text-green-600 hover:bg-green-50 rounded-md"
-                              >
-                                <CheckCircle2 className="w-4 h-4" />
-                              </button>
-                              <button 
-                                onClick={() => setEditingId(null)}
-                                className="p-1 text-slate-400 hover:bg-slate-100 rounded-md"
-                              >
-                                <X className="w-4 h-4" />
-                              </button>
-                            </div>
-                          ) : (
-                            <div 
-                              className="flex items-center justify-between group/cell cursor-pointer"
-                              onClick={() => {
-                                setEditingId(item.id);
-                                setEditValue(item.value);
-                              }}
-                            >
-                              <span className="text-secondary font-medium">{item.value}</span>
-                              <Code className="w-3 h-3 text-slate-300 opacity-0 group-hover/cell:opacity-100 transition-opacity" />
-                            </div>
-                          )}
+                          <span className="text-secondary font-medium">{item.value}</span>
                         </td>
                         <td className="px-8 py-6">
                           <span className="text-xs text-secondary italic max-w-[200px] block truncate" title={item.notes}>{item.notes || '-'}</span>
                         </td>
                         <td className="px-8 py-6 text-right">
-                          <span className={cn(
-                            "text-xs font-bold px-2 py-1 rounded-md",
-                            (item.confidenceScore || 0) > 0.9 ? "text-green-600 bg-green-50" : "text-amber-600 bg-amber-50"
-                          )}>
-                            {Math.round((item.confidenceScore || 0) * 100)}%
-                          </span>
+                          <span className="text-xs font-bold text-green-600 bg-green-50 px-2 py-1 rounded-md">99%</span>
                         </td>
                       </tr>
                     );
