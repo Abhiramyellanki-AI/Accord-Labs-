@@ -6,8 +6,19 @@ let anthropicInstance: Anthropic | null = null;
 
 function getAI() {
   if (!aiInstance) {
-    // Use environment variable first, with hardcoded key as a safety fallback for presentation
-    const apiKey = process.env.GEMINI_API_KEY || "AIzaSyDCCQH-hnZYj0ipujbce-QPBtjF1fwYApw";
+    // Robust check for environment variable
+    let apiKey = "";
+    try {
+      apiKey = process.env.GEMINI_API_KEY || "";
+    } catch (e) {
+      console.warn("Could not read process.env.GEMINI_API_KEY");
+    }
+
+    // Use hardcoded fallback if env var is missing or "undefined" string
+    if (!apiKey || apiKey === "undefined" || apiKey === "null") {
+      apiKey = "AIzaSyDCCQH-hnZYj0ipujbce-QPBtjF1fwYApw";
+    }
+
     aiInstance = new GoogleGenAI({ apiKey });
   }
   return aiInstance;
@@ -118,55 +129,63 @@ export async function extractTenderData(text: string, feedback?: string) {
 
   // Try Gemini first (Primary)
   if (gemini) {
-    try {
-      console.log("Attempting extraction with Gemini 3.0 Flash (Primary)...");
-      return await retryWithBackoff(async () => {
-        const response = await gemini.models.generateContent({
-          model: "gemini-3-flash-preview",
-          contents: prompt,
-          config: {
-            responseMimeType: "application/json",
-            responseSchema: {
-              type: Type.OBJECT,
-              properties: {
-                hardware: {
-                  type: Type.ARRAY,
-                  items: {
-                    type: Type.OBJECT,
-                    properties: {
-                      parameter: { type: Type.STRING },
-                      value: { type: Type.STRING },
-                      normalized_unit: { type: Type.STRING },
-                      notes: { type: Type.STRING }
-                    },
-                    required: ["parameter", "value", "normalized_unit", "notes"]
+    const modelsToTry = ["gemini-3-flash-preview", "gemini-1.5-flash"];
+    let lastGeminiError: any = null;
+
+    for (const modelName of modelsToTry) {
+      try {
+        console.log(`Attempting extraction with ${modelName}...`);
+        return await retryWithBackoff(async () => {
+          const response = await gemini.models.generateContent({
+            model: modelName,
+            contents: prompt,
+            config: {
+              responseMimeType: "application/json",
+              responseSchema: {
+                type: Type.OBJECT,
+                properties: {
+                  hardware: {
+                    type: Type.ARRAY,
+                    items: {
+                      type: Type.OBJECT,
+                      properties: {
+                        parameter: { type: Type.STRING },
+                        value: { type: Type.STRING },
+                        normalized_unit: { type: Type.STRING },
+                        notes: { type: Type.STRING }
+                      },
+                      required: ["parameter", "value", "normalized_unit", "notes"]
+                    }
+                  },
+                  software: {
+                    type: Type.ARRAY,
+                    items: {
+                      type: Type.OBJECT,
+                      properties: {
+                        parameter: { type: Type.STRING },
+                        value: { type: Type.STRING },
+                        notes: { type: Type.STRING }
+                      },
+                      required: ["parameter", "value", "notes"]
+                    }
                   }
                 },
-                software: {
-                  type: Type.ARRAY,
-                  items: {
-                    type: Type.OBJECT,
-                    properties: {
-                      parameter: { type: Type.STRING },
-                      value: { type: Type.STRING },
-                      notes: { type: Type.STRING }
-                    },
-                    required: ["parameter", "value", "notes"]
-                  }
-                }
-              },
-              required: ["hardware", "software"]
+                required: ["hardware", "software"]
+              }
             }
-          }
-        });
+          });
 
-        const data = JSON.parse(response.text || '{"hardware": [], "software": []}');
-        console.log("Gemini extraction successful.");
-        return flattenData(data);
-      });
-    } catch (error) {
-      console.error("Gemini extraction failed, falling back to Claude:", error);
+          const data = JSON.parse(response.text || '{"hardware": [], "software": []}');
+          console.log(`${modelName} extraction successful.`);
+          return flattenData(data);
+        });
+      } catch (error: any) {
+        lastGeminiError = error;
+        console.error(`${modelName} failed:`, error.message || error);
+        // Continue to next model
+      }
     }
+    console.error("All Gemini models failed. Last error:", lastGeminiError?.message || lastGeminiError);
   }
 
   // Fallback to Claude (Secondary)
