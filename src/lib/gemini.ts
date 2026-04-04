@@ -119,10 +119,10 @@ export async function extractTenderData(text: string, feedback?: string) {
   // Try Gemini first (Primary)
   if (gemini) {
     try {
-      console.log("Attempting extraction with Gemini 1.5 Flash (Primary)...");
+      console.log("Attempting extraction with Gemini 3.0 Flash (Primary)...");
       return await retryWithBackoff(async () => {
         const response = await gemini.models.generateContent({
-          model: "gemini-1.5-flash",
+          model: "gemini-3-flash-preview",
           contents: prompt,
           config: {
             responseMimeType: "application/json",
