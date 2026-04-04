@@ -30,11 +30,23 @@ async function startServer() {
   app.use(cors());
   app.use(express.json({ limit: '50mb' }));
 
+  // Request Logging
+  app.use((req, res, next) => {
+    console.log(`[${new Date().toISOString()}] ${req.method} ${req.url}`);
+    next();
+  });
+
+  // Top-level health check (outside router)
+  app.get("/health-check", (req, res) => {
+    res.json({ status: "alive", env: process.env.NODE_ENV });
+  });
+
   // API Router
   const apiRouter = express.Router();
 
   // Health check
   apiRouter.get("/health", (req, res) => {
+    console.log(">>> /api/health request received");
     res.json({ 
       status: "ok", 
       hasGroqKey: !!process.env.GROQ_API_KEY,
@@ -130,6 +142,12 @@ async function startServer() {
 
   // Mount API routes
   app.use("/api", apiRouter);
+
+  // Global Error Handler
+  app.use((err: any, req: any, res: any, next: any) => {
+    console.error(">>> Global Server Error:", err);
+    res.status(500).json({ error: "Internal Server Error", message: err.message });
+  });
 
   // Frontend Serving
   if (process.env.NODE_ENV !== "production") {
