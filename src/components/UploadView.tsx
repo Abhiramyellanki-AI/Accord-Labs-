@@ -204,7 +204,8 @@ export default function UploadView({ user, onComplete }: { user: User, onComplet
 
     } catch (err: any) {
       console.error("Processing error:", err);
-      setError(err.message || 'Failed to process document');
+      const errorMessage = err.response?.data?.error || err.message || 'Failed to process document';
+      setError(errorMessage);
       setStatus('error');
     }
   };

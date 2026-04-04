@@ -15,6 +15,7 @@ function getGroq() {
       console.error(">>> ERROR: GROQ_API_KEY is missing from environment variables");
       return null;
     }
+    console.log(">>> Groq client initialized with API key");
     groqInstance = new Groq({ apiKey });
   }
   return groqInstance;
@@ -44,28 +45,59 @@ async function startServer() {
   // LLM Extraction Route (Groq Only)
   apiRouter.post("/extract", async (req, res) => {
     console.log(">>> Processing extraction request...");
-    const { text, feedback, prompt } = req.body;
+    const { text, feedback, prompt: customPrompt } = req.body;
     const groq = getGroq();
 
     if (!groq) {
-      return res.status(500).json({ error: "GROQ_API_KEY not configured on server." });
+      console.error(">>> ERROR: GROQ_API_KEY is missing");
+      return res.status(500).json({ error: "GROQ_API_KEY not configured on server. Please add it to the Secrets panel and restart the server." });
     }
 
     try {
+      console.log(">>> Calling Groq API...");
       const completion = await groq.chat.completions.create({
         messages: [
-          { role: "system", content: "You are a data normalization engine. Always respond with valid JSON only." },
-          { role: "user", content: prompt || text }
+          { 
+            role: "system", 
+            content: "You are a data normalization engine. You MUST respond with a valid JSON object containing 'hardware' and 'software' arrays. Do not include any markdown formatting or extra text." 
+          },
+          { 
+            role: "user", 
+            content: (customPrompt || text).substring(0, 30000) // Safety truncation
+          }
         ],
         model: "llama-3.3-70b-versatile",
-        response_format: { type: "json_object" }
+        response_format: { type: "json_object" },
+        temperature: 0.1,
       });
 
       const content = completion.choices[0]?.message?.content;
-      res.json({ success: true, data: content ? JSON.parse(content) : null });
+      if (!content) {
+        throw new Error("Empty response from Groq");
+      }
+
+      console.log(">>> Extraction successful");
+      try {
+        const parsedData = JSON.parse(content);
+        res.json({ success: true, data: parsedData });
+      } catch (parseError: any) {
+        console.error(">>> JSON Parse Error:", parseError.message);
+        console.error(">>> Raw Content:", content);
+        res.status(500).json({ error: "AI returned malformed JSON. Please try again." });
+      }
     } catch (error: any) {
       console.error(">>> Groq API Error:", error.message);
-      res.status(500).json({ error: `AI Extraction failed: ${error.message}` });
+      const status = error.status || 500;
+      const message = error.message || "AI Extraction failed";
+      
+      // Provide more specific error messages to the frontend
+      if (status === 401) {
+        res.status(401).json({ error: "Invalid Groq API Key. Please check your secrets." });
+      } else if (status === 429) {
+        res.status(429).json({ error: "Groq Rate limit exceeded. Please wait a moment." });
+      } else {
+        res.status(status).json({ error: `Groq Error: ${message}` });
+      }
     }
   });
 
