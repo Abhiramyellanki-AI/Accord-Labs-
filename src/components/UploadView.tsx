@@ -4,12 +4,13 @@ import { User } from 'firebase/auth';
 import { collection, addDoc, serverTimestamp, updateDoc, doc } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 import { TenderDocument } from '../types';
-import { Upload, FileText, Loader2, CheckCircle2, AlertCircle, X } from 'lucide-react';
+import { Upload, FileText, Loader2, CheckCircle2, AlertCircle, X, Search, Globe } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import * as PDFJS from 'pdfjs-dist';
 import pdfWorker from 'pdfjs-dist/build/pdf.worker.mjs?url';
 import * as XLSX from 'xlsx';
-import { extractTenderData } from '../lib/gemini';
+import axios from 'axios';
+import { extractTenderData } from '../lib/llm';
 import { cn } from '../lib/utils';
 
 // Set up PDF.js worker
@@ -17,6 +18,8 @@ PDFJS.GlobalWorkerOptions.workerSrc = pdfWorker;
 
 export default function UploadView({ user, onComplete }: { user: User, onComplete: (doc: TenderDocument) => void }) {
   const [file, setFile] = useState<File | null>(null);
+  const [tenderId, setTenderId] = useState('');
+  const [isKpppLoading, setIsKpppLoading] = useState(false);
   const [status, setStatus] = useState<'idle' | 'uploading' | 'extracting' | 'analyzing' | 'completed' | 'error'>('idle');
   const [progress, setProgress] = useState(0);
   const [error, setError] = useState('');
@@ -61,6 +64,75 @@ export default function UploadView({ user, onComplete }: { user: User, onComplet
       fullText += JSON.stringify(json) + '\n';
     });
     return fullText;
+  };
+
+  const handleKpppSearch = async () => {
+    if (!tenderId.trim()) return;
+    
+    setIsKpppLoading(true);
+    setError('');
+    setStatus('extracting');
+    setProgress(20);
+
+    try {
+      // 1. Fetch from backend
+      const response = await axios.get(`/api/kppp/tender/${tenderId}`);
+      if (!response.data.success) throw new Error(response.data.error);
+
+      const { title, content } = response.data.data;
+      setProgress(40);
+
+      // 2. Create document entry in Firestore
+      const docRef = await addDoc(collection(db, 'documents'), {
+        userId: user.uid,
+        fileName: title || `KPPP Tender ${tenderId}`,
+        fileType: 'pdf', // Mock as PDF for UI consistency
+        uploadDate: new Date().toISOString(),
+        status: 'processing',
+        extractedText: content
+      });
+
+      // 3. Analyze with Groq
+      setStatus('analyzing');
+      setProgress(70);
+      const extractedData = await extractTenderData(content);
+
+      // 4. Save extracted data to subcollection
+      const extractedDataRef = collection(db, 'documents', docRef.id, 'extracted_data');
+      for (const item of extractedData) {
+        await addDoc(extractedDataRef, {
+          documentId: docRef.id,
+          ...item,
+          confidenceScore: 0.95
+        });
+      }
+
+      // 5. Update document status
+      await updateDoc(doc(db, 'documents', docRef.id), {
+        status: 'completed'
+      });
+
+      setStatus('completed');
+      setProgress(100);
+
+      const finalDoc: TenderDocument = {
+        id: docRef.id,
+        userId: user.uid,
+        fileName: title || `KPPP Tender ${tenderId}`,
+        fileType: 'pdf',
+        uploadDate: new Date().toISOString(),
+        status: 'completed'
+      };
+      
+      setTimeout(() => onComplete(finalDoc), 1000);
+
+    } catch (err: any) {
+      console.error("KPPP Processing error:", err);
+      setError(err.response?.data?.error || err.message || 'Failed to process KPPP tender');
+      setStatus('error');
+    } finally {
+      setIsKpppLoading(false);
+    }
   };
 
   const handleProcess = async () => {
@@ -141,55 +213,70 @@ export default function UploadView({ user, onComplete }: { user: User, onComplet
     <div className="glass-card rounded-5xl p-12">
       <div className="max-w-2xl mx-auto">
         <div className="text-center mb-10">
-          <h2 className="text-3xl font-extrabold text-primary mb-3 font-display tracking-tight">Upload Tender Document</h2>
-          <p className="text-lg text-secondary font-medium">Upload your government tender document (PDF or XLSX) to extract technical requirements.</p>
+          <h2 className="text-3xl font-extrabold text-primary mb-3 font-display tracking-tight">Import Tender Specifications</h2>
+          <p className="text-lg text-secondary font-medium">Upload a document or search by KPPP Tender ID to extract technical requirements.</p>
+        </div>
+
+        <div className="grid md:grid-cols-2 gap-8 mb-10">
+          {/* KPPP Search */}
+          <div className="glass-card rounded-4xl p-8 border-2 border-slate-100 hover:border-primary/20 transition-all">
+            <div className="flex items-center gap-4 mb-6">
+              <div className="w-12 h-12 bg-primary/10 rounded-2xl flex items-center justify-center text-primary">
+                <Globe className="w-6 h-6" />
+              </div>
+              <div>
+                <h3 className="text-xl font-bold text-primary">KPPP Portal</h3>
+                <p className="text-sm text-secondary">Search by Tender ID</p>
+              </div>
+            </div>
+            
+            <div className="space-y-4">
+              <div className="relative">
+                <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" />
+                <input 
+                  type="text" 
+                  placeholder="Enter Tender ID (e.g., 12345)" 
+                  value={tenderId}
+                  onChange={(e) => setTenderId(e.target.value)}
+                  className="w-full pl-12 pr-4 py-3.5 bg-slate-50 border border-slate-200 rounded-2xl focus:outline-none focus:ring-2 ring-primary/10 focus:border-primary transition-all"
+                />
+              </div>
+              <button 
+                onClick={handleKpppSearch}
+                disabled={!tenderId.trim() || isKpppLoading || status !== 'idle'}
+                className="w-full btn-primary py-3.5 text-sm"
+              >
+                {isKpppLoading ? <Loader2 className="w-5 h-5 animate-spin" /> : 'Search & Analyze'}
+              </button>
+            </div>
+          </div>
+
+          {/* File Upload */}
+          <div 
+            {...getRootProps()}
+            className={cn(
+              "glass-card rounded-4xl p-8 border-2 border-dashed transition-all cursor-pointer flex flex-col items-center justify-center text-center",
+              isDragActive ? "border-primary bg-primary/5" : "border-slate-200 hover:border-primary hover:bg-slate-50"
+            )}
+          >
+            <input {...getInputProps()} />
+            <div className="w-12 h-12 bg-slate-50 rounded-2xl flex items-center justify-center mb-4 group-hover:scale-110 transition-transform">
+              <Upload className="w-6 h-6 text-primary" />
+            </div>
+            <h3 className="text-xl font-bold text-primary mb-1">Upload File</h3>
+            <p className="text-sm text-secondary">PDF or XLSX (Max 10MB)</p>
+            
+            {file && (
+              <div className="mt-4 flex items-center gap-2 px-3 py-1 bg-primary/5 rounded-lg">
+                <FileText className="w-4 h-4 text-primary" />
+                <span className="text-xs font-bold text-primary truncate max-w-[120px]">{file.name}</span>
+              </div>
+            )}
+          </div>
         </div>
 
         <AnimatePresence mode="wait">
-          {status === 'idle' ? (
-            <div
-              key="dropzone"
-              {...getRootProps()}
-              className={cn(
-                "border-2 border-dashed rounded-4xl p-16 text-center transition-all cursor-pointer group",
-                isDragActive ? "border-primary bg-primary/5" : "border-slate-200 hover:border-primary hover:bg-slate-50"
-              )}
-            >
-              <motion.div
-                initial={{ opacity: 0, y: 10 }}
-                animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0, scale: 0.95 }}
-              >
-                <input {...getInputProps()} />
-                <div className="w-24 h-24 bg-slate-50 rounded-3xl flex items-center justify-center mx-auto mb-8 group-hover:scale-110 transition-transform shadow-sm">
-                  <Upload className="w-12 h-12 text-primary" />
-                </div>
-                {file ? (
-                  <div className="flex items-center justify-center gap-4">
-                    <FileText className="w-6 h-6 text-primary" />
-                    <span className="text-xl font-bold text-primary">{file.name}</span>
-                    <button 
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setFile(null);
-                      }}
-                      className="p-2 hover:bg-slate-200 rounded-full transition-colors"
-                    >
-                      <X className="w-5 h-5" />
-                    </button>
-                  </div>
-                ) : (
-                  <>
-                    <h3 className="text-2xl font-bold text-primary mb-2">
-                      {isDragActive ? 'Drop it here' : 'Drag & drop your file here'}
-                    </h3>
-                    <p className="text-lg text-secondary font-medium">or click to browse from your computer</p>
-                    <p className="text-xs text-slate-400 mt-8 uppercase tracking-widest font-extrabold">PDF, XLSX, XLS (Max 10MB)</p>
-                  </>
-                )}
-              </motion.div>
-            </div>
-          ) : (
+          {status !== 'idle' && (
             <motion.div
               key="progress"
               initial={{ opacity: 0, scale: 0.95 }}
