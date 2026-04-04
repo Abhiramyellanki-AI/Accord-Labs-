@@ -5,29 +5,21 @@ AccordLabs is an intelligent data extraction and normalization platform designed
 ---
 
 ## 🚀 Live Demo
-https://devhangout-five.vercel.app/
+**[Insert Deployed Link Here]**
 
 ---
 
 ## 👥 Team Information
-*   **Team Name:** [Team DevHangout]
+*   **Team Name:** [Insert Team Name Here]
 *   **Members:**
-    *   [Abhiram Yellanki]
-    *   [Vibhash Naidu Lokavarapu]
-    *   [Abhay Thomman Chirayil]
+    *   [Member Name 1]
+    *   [Member Name 2]
+    *   [Member Name 3]
 
 ---
 
 ## 🎯 Problem Statement
-*   **Assigned Problem / Company:** [Company Name:
-                        Acceleron Labs Problem Statement:
-Acceleron Labs deals extensively with government tenders that contain detailed product requirements and specifications. Currently, manually analyzing these complex 
-specifications—which cover both hardware and software requirements—leads to inefficiencies and potential errors.The objective is to build a software-driven solution
-to automate this process. The automated solution must be able to do the following:Targeted Extraction: Extract and identify hardware requirements (e.g., CPU, RAM, storage)
-separately from software requirements (e.g., protocols, security, logs).File Handling: Process input documents that are primarily in PDF format, as well as occasional Excel
-(XLS) formats.Structured Output: Organize and export all the extracted information into a structured Excel file.Adaptability: Interpret and decode different writing styles 
-and representations, since requirement formats vary significantly across different documents.Technology: Utilize any LLM models or API keys (such as Google Gemini or Claude)
- to build the decoding and extraction logic.]
+*   **Assigned Problem / Company:** [Insert Problem Statement or Company Name Here]
 *   **The Challenge:** Manually extracting and comparing technical specifications (CPU, RAM, Storage, etc.) from hundreds of pages of PDF tender documents is slow, inconsistent, and prone to human error.
 *   **The Solution:** AccordLabs uses a dual-engine AI approach (Claude + Gemini) to automatically identify, clean, and standardize these specs into a unified format.
 
@@ -85,9 +77,5 @@ and representations, since requirement formats vary significantly across differe
     ```
 
 ---
-## Drive link consisting PPT and Video:
 
-
-
-
-© 2024 AccordLabs | Built for [MSSPECTRA HACKATHON]
+© 2024 AccordLabs | Built for [Insert Event/Hackathon Name]
